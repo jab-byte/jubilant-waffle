@@ -1,11 +1,13 @@
 # 阿里云 ECS 部署用 Dockerfile
-# 基于 Node.js 20 Alpine 镜像
+# 基于 Node.js 20 slim 镜像（更稳定）
 
-FROM node:20-alpine AS base
+FROM node:20-slim AS base
 
 # 安装依赖阶段
 FROM base AS deps
-RUN apk add --no-cache libc6-compat
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 # 复制 package 文件
