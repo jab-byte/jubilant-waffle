@@ -41,7 +41,7 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 
-import { createClient } from "@/lib/supabase/client"
+// 使用阿里云 MySQL API 代替 Supabase
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -71,7 +71,7 @@ const ADMIN_PWD = "123456"
 const STATUS_OPTIONS = ["未沟通", "已沟通", "已成交", "无意向"] as const
 type StatusType = (typeof STATUS_OPTIONS)[number]
 
-const ATTACHMENT_BUCKET = "customer-attachments"
+// 附件功能需要配置阿里云 OSS（暂时禁用）
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 
 type Attachment = {
@@ -255,7 +255,7 @@ function rowToCustomer(r: DBRow): Customer {
 }
 
 export default function Page() {
-  const supabase = useMemo(() => createClient(), [])
+  // 移除 Supabase，改用 MySQL API
 
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [loginError, setLoginError] = useState(false)
@@ -304,30 +304,39 @@ export default function Page() {
   }, [])
 
   const loadCustomers = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("customers")
-      .select("*")
-      .order("created_at", { ascending: false })
-    if (error) {
-      console.log("[v0] load customers error:", error.message)
-      return
+    try {
+      const res = await fetch("/api/customers")
+      if (!res.ok) {
+        const err = await res.json()
+        console.log("[v0] load customers error:", err.error)
+        return
+      }
+      const data = await res.json()
+      setDataList((data as DBRow[]).map(rowToCustomer))
+    } catch (err: any) {
+      console.log("[v0] load customers error:", err.message)
     }
-    setDataList((data as DBRow[]).map(rowToCustomer))
-  }, [supabase])
+  }, [])
 
   const loadSettings = useCallback(async () => {
-    const { data, error } = await supabase.from("app_settings").select("key, values")
-    if (error) {
-      console.log("[v0] load settings error:", error.message)
-      return
+    try {
+      const res = await fetch("/api/settings")
+      if (!res.ok) {
+        const err = await res.json()
+        console.log("[v0] load settings error:", err.error)
+        return
+      }
+      const data = await res.json()
+      const map: Record<string, string[]> = {}
+      for (const row of data as { key: string; values: string[] }[]) {
+        map[row.key] = row.values ?? []
+      }
+      if (map.sources?.length) setSourceList(map.sources)
+      if (map.followers?.length) setFollowerList(map.followers)
+    } catch (err: any) {
+      console.log("[v0] load settings error:", err.message)
     }
-    const map: Record<string, string[]> = {}
-    for (const row of data as { key: string; values: string[] }[]) {
-      map[row.key] = row.values ?? []
-    }
-    if (map.sources?.length) setSourceList(map.sources)
-    if (map.followers?.length) setFollowerList(map.followers)
-  }, [supabase])
+  }, [])
 
   // 登录后拉取数据
   useEffect(() => {
@@ -458,97 +467,55 @@ export default function Page() {
       remark: "",
       attachments: [],
     }
-    let error
-    if (form.id) {
-      ;({ error } = await supabase.from("customers").update(payload).eq("id", form.id))
-    } else {
-      ;({ error } = await supabase.from("customers").insert(payload))
+    try {
+      const url = form.id ? `/api/customers/${form.id}` : "/api/customers"
+      const method = form.id ? "PUT" : "POST"
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      setSaving(false)
+      if (!res.ok) {
+        const err = await res.json()
+        alert("保存失败：" + err.error)
+        return
+      }
+      setModalOpen(false)
+      await loadCustomers()
+    } catch (err: any) {
+      setSaving(false)
+      alert("保存失败：" + err.message)
     }
-    setSaving(false)
-    if (error) {
-      alert("保存失败：" + error.message)
-      return
-    }
-    setModalOpen(false)
-    await loadCustomers()
   }
 
   async function deleteCustomer(id: string) {
     if (!confirm("确定删除该客户？")) return
-    const target = dataList.find((i) => i.id === id)
-    const paths = (target?.logs ?? [])
-      .flatMap((log) => log.attachments.map((a) => a.path))
-      .filter(Boolean)
-    const { error } = await supabase.from("customers").delete().eq("id", id)
-    if (error) {
-      alert("删除失败：" + error.message)
-      return
+    try {
+      const res = await fetch(`/api/customers/${id}`, { method: "DELETE" })
+      if (!res.ok) {
+        const err = await res.json()
+        alert("删除失败：" + err.error)
+        return
+      }
+      setDataList((prev) => prev.filter((i) => i.id !== id))
+    } catch (err: any) {
+      alert("删除失败：" + err.message)
     }
-    if (paths.length > 0) {
-      await supabase.storage.from(ATTACHMENT_BUCKET).remove(paths)
-    }
-    setDataList((prev) => prev.filter((i) => i.id !== id))
   }
 
   async function onAttachmentChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? [])
+    // 附件上传功能需要配置阿里云 OSS，暂时禁用
+    // 如需启用，请配置阿里云 OSS 并创建 /api/upload 接口
     e.target.value = ""
-    if (files.length === 0) return
-
-    const oversized = files.find((f) => f.size > MAX_FILE_SIZE)
-    if (oversized) {
-      alert(`单个文件不能超过 10MB：${oversized.name}`)
-      return
-    }
-
-    setUploading(true)
-    try {
-      const newAttachments: Attachment[] = []
-      for (const file of files) {
-        const safe = file.name.replace(/[^\w.\-一-龥]+/g, "_")
-        const path = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safe}`
-        const { error } = await supabase.storage
-          .from(ATTACHMENT_BUCKET)
-          .upload(path, file, {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: file.type || "application/octet-stream",
-          })
-        if (error) {
-          alert(`上传失败：${file.name}（${error.message}）`)
-          continue
-        }
-        const { data: pub } = supabase.storage.from(ATTACHMENT_BUCKET).getPublicUrl(path)
-        newAttachments.push({
-          path,
-          url: pub.publicUrl,
-          name: file.name,
-          type: file.type || "application/octet-stream",
-          size: file.size,
-          uploadedAt: new Date().toISOString(),
-        })
-      }
-      if (newAttachments.length > 0) {
-        setForm((prev) => ({
-          ...prev,
-          newLogAttachments: [...prev.newLogAttachments, ...newAttachments],
-        }))
-      }
-    } finally {
-      setUploading(false)
-    }
+    alert("附件上传功能暂未启用。如需使用，请配置阿里云 OSS 存储服务。")
   }
 
   async function removeAttachment(index: number) {
     const target = form.newLogAttachments[index]
     if (!target) return
     if (!confirm(`确定删除附件「${target.name}」？`)) return
-    const { error } = await supabase.storage
-      .from(ATTACHMENT_BUCKET)
-      .remove([target.path])
-    if (error) {
-      console.log("[v0] remove attachment storage error:", error.message)
-    }
+    // 附件删除（如需启用阿里云 OSS，可在此处添加删除逻辑）
     setForm((prev) => ({
       ...prev,
       newLogAttachments: prev.newLogAttachments.filter((_, i) => i !== index),
@@ -607,16 +574,18 @@ export default function Page() {
   }
 
   async function clearData() {
-    if (!confirm("确定清空所有客户数据？此操作将从云端永久删除，且不可撤销。")) return
-    const { error } = await supabase
-      .from("customers")
-      .delete()
-      .not("id", "is", null)
-    if (error) {
-      alert("清空失败：" + error.message)
-      return
+    if (!confirm("确定清空所有客户数据？此操作将从数据库永久删除，且不可撤销。")) return
+    try {
+      const res = await fetch("/api/customers/batch", { method: "DELETE" })
+      if (!res.ok) {
+        const err = await res.json()
+        alert("清空失败：" + err.error)
+        return
+      }
+      setDataList([])
+    } catch (err: any) {
+      alert("清空失败：" + err.message)
     }
-    setDataList([])
   }
 
   // 列名映射：从 Excel 中文列名到数据库字段
@@ -706,31 +675,33 @@ export default function Page() {
 
       // 批量导入到数据库
       setLoading(true)
-      const { error } = await supabase.from('customers').insert(
-        converted.map(c => ({
-          douyin: c.douyin || '',
-          wechat: c.wechat || '',
-          type: c.type,
-          clientgender: c.clientgender,
-          studentname: c.studentname || '',
-          studentgender: c.studentgender,
-          city: c.city || '',
-          grade: c.grade || '',
-          score: c.score || '',
-          phone: c.phone || '',
-          source: c.source || '',
-          follower: c.follower || '',
-          school: c.school || '',
-          status: c.status,
-          logs: c.logs || [],
-          name: '',
-          remark: '',
-          attachments: [],
-        }))
-      )
+      const res = await fetch('/api/customers/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customers: converted.map(c => ({
+            douyin: c.douyin || '',
+            wechat: c.wechat || '',
+            type: c.type,
+            clientgender: c.clientgender,
+            studentname: c.studentname || '',
+            studentgender: c.studentgender,
+            city: c.city || '',
+            grade: c.grade || '',
+            score: c.score || '',
+            phone: c.phone || '',
+            source: c.source || '',
+            follower: c.follower || '',
+            school: c.school || '',
+            status: c.status,
+            logs: c.logs || [],
+          })),
+        }),
+      })
 
-      if (error) {
-        alert('导入失败：' + error.message)
+      if (!res.ok) {
+        const err = await res.json()
+        alert('导入失败：' + err.error)
       } else {
         alert(`成功导入 ${converted.length} 条客户信息`)
         await loadCustomers()
@@ -743,14 +714,22 @@ export default function Page() {
   }
 
   async function saveSetting(key: "sources" | "followers", values: string[]) {
-    const { error } = await supabase
-      .from("app_settings")
-      .upsert({ key, values }, { onConflict: "key" })
-    if (error) {
-      alert("保存设置失败：" + error.message)
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, values }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        alert("保存设置失败：" + err.error)
+        return false
+      }
+      return true
+    } catch (err: any) {
+      alert("保存设置失败：" + err.message)
       return false
     }
-    return true
   }
 
   async function addSource() {
