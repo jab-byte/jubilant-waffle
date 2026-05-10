@@ -5,7 +5,10 @@ FROM node:20-slim AS base
 
 # 安装依赖阶段
 FROM base AS deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
+
+# 使用国内镜像源（阿里云），解决中国大陆网络问题
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
@@ -13,8 +16,9 @@ WORKDIR /app
 # 复制 package 文件
 COPY package.json pnpm-lock.yaml* ./
 
-# 安装 pnpm 并安装依赖
-RUN corepack enable pnpm && pnpm install --frozen-lockfile
+# 使用国内 npm 镜像加速 pnpm 依赖安装
+RUN corepack enable pnpm && npm config set registry https://registry.npmmirror.com && \
+    pnpm install --frozen-lockfile
 
 # 构建阶段
 FROM base AS builder
