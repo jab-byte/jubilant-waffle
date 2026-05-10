@@ -1,6 +1,101 @@
-# 阿里云 MySQL 8.0 部署说明
+# 阿里云 ECS + MySQL 8.0 部署说明
 
-## 1. 创建阿里云 MySQL 实例
+## 一、阿里云 ECS 部署
+
+### 方式一：Docker 部署（推荐）
+
+```bash
+# 1. 在 ECS 上安装 Docker
+sudo yum install -y docker
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# 2. 克隆代码
+git clone https://github.com/jab-byte/jubilant-waffle.git
+cd jubilant-waffle
+git checkout mysql
+
+# 3. 创建生产环境配置
+cp .env.production.example .env.production
+vim .env.production
+# 填写实际的数据库连接信息
+
+# 4. 构建 Docker 镜像
+docker build -t customer-management .
+
+# 5. 运行容器
+docker run -d \
+  --name customer-app \
+  -p 3000:3000 \
+  --env-file .env.production \
+  --restart unless-stopped \
+  customer-management
+
+# 6. 查看日志
+docker logs -f customer-app
+```
+
+### 方式二：PM2 直接运行
+
+```bash
+# 1. 安装 Node.js 20
+curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+sudo yum install -y nodejs
+
+# 2. 安装 pnpm 和 PM2
+npm install -g pnpm pm2
+
+# 3. 克隆代码
+git clone https://github.com/jab-byte/jubilant-waffle.git
+cd jubilant-waffle
+git checkout mysql
+
+# 4. 安装依赖并构建
+pnpm install
+pnpm run build
+
+# 5. 创建环境配置
+cp .env.production.example .env.production
+vim .env.production
+
+# 6. 复制静态文件到 standalone 目录
+cp -r public .next/standalone/
+cp -r .next/static .next/standalone/.next/
+
+# 7. 使用 PM2 启动
+pm2 start ecosystem.config.js
+
+# 8. 设置开机自启
+pm2 save
+pm2 startup
+```
+
+### Nginx 反向代理配置（可选）
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+```
+
+---
+
+## 二、阿里云 MySQL 8.0 配置
+
+### 1. 创建阿里云 MySQL 实例
 
 1. 登录阿里云控制台，进入 RDS 管理控制台
 2. 点击「创建实例」，选择 MySQL 8.0 版本

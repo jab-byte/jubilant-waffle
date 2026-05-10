@@ -1,0 +1,28 @@
+# 依赖
+node_modules
+npm-debug.log*
+pnpm-debug.log*
+
+# Next.js 构建输出
+.next
+
+# 环境变量
+.env
+.env.*
+!.env.mysql.example
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+
+# 文档
+*.md
+!README.md
+
+# 其他
+.DS_Store
+Thumbs.db
